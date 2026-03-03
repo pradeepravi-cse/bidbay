@@ -1,0 +1,9 @@
+{
+  "version": "1",
+  "name": "bidbay",
+  "type": "collection",
+  "ignore": [
+    "node_modules",
+    ".git"
+  ]
+}

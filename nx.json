@@ -37,7 +37,20 @@
       "options": {
         "targetName": "test"
       },
-      "exclude": ["apps/bidbay-e2e/**/*"]
+      "exclude": [
+        "apps/bidbay-e2e/**/*",
+        "api/api-gateway-e2e/**/*",
+        "api/users-e2e/**/*",
+        "api/bidding-service-e2e/**/*",
+        "api/auction-service-e2e/**/*",
+        "api/wallet-service-e2e/**/*",
+        "api/notification-service-e2e/**/*",
+        "api/users-service-e2e/**/*",
+        "api/kafka-producer-e2e/**/*",
+        "api/kafka-consumer-e2e/**/*",
+        "api/order-service-e2e/**/*",
+        "api/inventory-service-e2e/**/*"
+      ]
     }
   ]
 }

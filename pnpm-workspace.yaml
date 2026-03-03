@@ -1,0 +1,9 @@
+onlyBuiltDependencies:
+  - '@nestjs/core'
+  - '@parcel/watcher'
+  - '@swc/core'
+  - less
+  - nx
+  - unrs-resolver
+packages:
+  - api/*
