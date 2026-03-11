@@ -21,6 +21,7 @@ import { CqrsModule } from '@nestjs/cqrs';
 import { ScheduleModule } from '@nestjs/schedule';
 import { ClientsModule, Transport } from '@nestjs/microservices';
 import { LoggerModule } from '@bidbay/logger';
+import { AuditModule, AuditLog } from '@bidbay/audit';
 
 import { AppController } from './app.controller';
 
@@ -48,7 +49,7 @@ import { InventoryEventsConsumer } from '../consumers/inventory-events.consumer'
 import { OutboxPollerService } from '../outbox/outbox-poller.service';
 
 const COMMAND_HANDLERS = [PlaceOrderHandler];
-const QUERY_HANDLERS   = [GetOrderByIdHandler, GetOrdersByUserHandler];
+const QUERY_HANDLERS = [GetOrderByIdHandler, GetOrdersByUserHandler];
 
 @Module({
   imports: [
@@ -58,20 +59,25 @@ const QUERY_HANDLERS   = [GetOrderByIdHandler, GetOrdersByUserHandler];
     // Structured JSON logging with trace ID propagation
     LoggerModule.forService('order-service'),
 
+    // Full audit trail: HTTP requests + entity-level changes persisted to DB.
+    AuditModule.forService('order-service'),
+
     // PostgreSQL connection — uses env vars set in .env
     TypeOrmModule.forRootAsync({
       useFactory: () => ({
-        type:        'postgres' as const,
-        host:        process.env.DB_HOST        ?? 'localhost',
-        port:        Number(process.env.DB_PORT ?? 5432),
-        username:    process.env.DB_USER        ?? 'postgres',
-        password:    process.env.DB_PASS        ?? 'postgres',
-        database:    process.env.ORDER_DB_NAME  ?? 'order_service',
-        entities:    [Order, Outbox, OrderInbox],
+        type: 'postgres' as const,
+        host: process.env.DB_HOST ?? 'localhost',
+        port: Number(process.env.DB_PORT ?? 5432),
+        username: process.env.DB_USER ?? 'postgres',
+        password: process.env.DB_PASS ?? 'postgres',
+        database: process.env.ORDER_DB_NAME ?? 'order_service',
+        entities: [Order, Outbox, OrderInbox, AuditLog],
+        // autoLoadEntities picks up any entity registered via forFeature().
+        autoLoadEntities: true,
         // In dev, TypeORM auto-creates / alters tables to match entities.
         // NEVER use synchronize:true in production — use migrations instead.
         synchronize: process.env.NODE_ENV !== 'production',
-        logging:     ['error'] as const,
+        logging: ['error'] as const,
       }),
     }),
 
@@ -92,12 +98,14 @@ const QUERY_HANDLERS   = [GetOrderByIdHandler, GetOrdersByUserHandler];
      */
     ClientsModule.register([
       {
-        name:      'KAFKA_CLIENT',
+        name: 'KAFKA_CLIENT',
         transport: Transport.KAFKA,
         options: {
           client: {
-            clientId:              'order-service-producer',
-            brokers:               (process.env.KAFKA_BROKERS ?? '192.168.0.115:9092').split(','),
+            clientId: 'order-service-producer',
+            brokers: (process.env.KAFKA_BROKERS ?? '192.168.0.115:9092').split(
+              ',',
+            ),
             allowAutoTopicCreation: true,
           },
           producer: {},

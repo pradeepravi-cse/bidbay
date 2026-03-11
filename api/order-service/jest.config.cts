@@ -8,6 +8,7 @@ module.exports = {
   moduleFileExtensions: ['ts', 'js', 'html'],
   moduleNameMapper: {
     '^@bidbay/logger$': '<rootDir>/../../libs/logger/src/index.ts',
+    '^@bidbay/audit$': '<rootDir>/../../libs/audit/src/index.ts',
   },
   coverageDirectory: '../../coverage/api/order-service',
   collectCoverageFrom: [

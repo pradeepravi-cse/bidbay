@@ -14,6 +14,7 @@ import { CqrsModule } from '@nestjs/cqrs';
 import { ScheduleModule } from '@nestjs/schedule';
 import { ClientsModule, Transport } from '@nestjs/microservices';
 import { LoggerModule } from '@bidbay/logger';
+import { AuditModule, AuditLog } from '@bidbay/audit';
 
 import { AppController } from './app.controller';
 
@@ -51,6 +52,9 @@ const QUERY_HANDLERS = [GetAllInventoryHandler, GetInventoryBySkuHandler];
     // Structured JSON logging with trace ID propagation
     LoggerModule.forService('inventory-service'),
 
+    // Full audit trail: HTTP requests + entity-level changes persisted to DB.
+    AuditModule.forService('inventory-service'),
+
     TypeOrmModule.forRootAsync({
       useFactory: () => ({
         type: 'postgres' as const,
@@ -59,7 +63,9 @@ const QUERY_HANDLERS = [GetAllInventoryHandler, GetInventoryBySkuHandler];
         username: process.env.DB_USER ?? 'postgres',
         password: process.env.DB_PASS ?? 'postgres',
         database: process.env.INVENTORY_DB_NAME ?? 'inventory_service',
-        entities: [Inventory, InventoryOutbox, InventoryInbox],
+        entities: [Inventory, InventoryOutbox, InventoryInbox, AuditLog],
+        // autoLoadEntities picks up any entity registered via forFeature().
+        autoLoadEntities: true,
         synchronize: process.env.NODE_ENV !== 'production',
         logging: ['error'] as const,
       }),
