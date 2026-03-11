@@ -22,19 +22,21 @@
  *  5. UPDATE inbox SET status = PROCESSED
  *  6. COMMIT
  */
-import { Controller, Logger } from '@nestjs/common';
+import { Controller } from '@nestjs/common';
 import { EventPattern, Payload, Ctx, KafkaContext } from '@nestjs/microservices';
 import { DataSource } from 'typeorm';
 import { Order, OrderStatus } from '../entities/order.entity';
 import { InboxRepository } from '../repositories/inbox.repository';
+import { AppLogger, setTraceContext } from '@bidbay/logger';
+
+const CTX = { service: 'OrderService', location: 'InventoryEventsConsumer' };
 
 @Controller()
 export class InventoryEventsConsumer {
-  private readonly logger = new Logger(InventoryEventsConsumer.name);
-
   constructor(
     private readonly dataSource: DataSource,
     private readonly inboxRepo: InboxRepository,
+    private readonly logger: AppLogger,
   ) {}
 
   // ── SAGA happy path ──────────────────────────────────────────────────────
@@ -46,24 +48,33 @@ export class InventoryEventsConsumer {
     const eventId = this.extractEventId(context);
     if (!eventId) return;
 
-    this.logger.log(`inventory.reserved received | orderId=${data.orderId} | eventId=${eventId}`);
+    setTraceContext({ traceId: eventId });
 
-    await this.dataSource.transaction(async (em) => {
-      // Inbox guard: insert or bail if duplicate
-      const isNew = await this.inboxRepo.tryInsert(em, eventId, 'inventory.reserved', 'inventory.reserved');
-      if (!isNew) {
-        this.logger.warn(`Duplicate event skipped: ${eventId}`);
-        return;
-      }
+    this.logger.logKafkaIncoming('inventory.reserved', eventId, data, CTX);
 
-      // SAGA step: confirm the order
-      await em.update(Order, { id: data.orderId }, {
-        status:    OrderStatus.CONFIRMED,
-        updatedAt: new Date(),
+    try {
+      await this.dataSource.transaction(async (em) => {
+        // Inbox guard: insert or bail if duplicate
+        const isNew = await this.inboxRepo.tryInsert(em, eventId, 'inventory.reserved', 'inventory.reserved');
+        if (!isNew) {
+          this.logger.logKafkaDuplicate('inventory.reserved', eventId, CTX);
+          return;
+        }
+
+        // SAGA step: confirm the order
+        await em.update(Order, { id: data.orderId }, {
+          status:    OrderStatus.CONFIRMED,
+          updatedAt: new Date(),
+        });
+
+        await this.inboxRepo.markProcessed(em, eventId);
       });
 
-      await this.inboxRepo.markProcessed(em, eventId);
-    });
+      this.logger.logKafkaSuccess('inventory.reserved', eventId, { orderId: data.orderId, newStatus: OrderStatus.CONFIRMED }, CTX);
+    } catch (err) {
+      this.logger.logKafkaError('inventory.reserved', eventId, err, CTX);
+      throw err;
+    }
   }
 
   // ── SAGA compensation ─────────────────────────────────────────────────────
@@ -75,24 +86,33 @@ export class InventoryEventsConsumer {
     const eventId = this.extractEventId(context);
     if (!eventId) return;
 
-    this.logger.log(`inventory.failed received | orderId=${data.orderId} | reason=${data.reason}`);
+    setTraceContext({ traceId: eventId });
 
-    await this.dataSource.transaction(async (em) => {
-      const isNew = await this.inboxRepo.tryInsert(em, eventId, 'inventory.failed', 'inventory.failed');
-      if (!isNew) {
-        this.logger.warn(`Duplicate event skipped: ${eventId}`);
-        return;
-      }
+    this.logger.logKafkaIncoming('inventory.failed', eventId, data, CTX);
 
-      // SAGA compensation: cancel the order, record the reason
-      await em.update(Order, { id: data.orderId }, {
-        status:        OrderStatus.CANCELLED,
-        failureReason: data.reason,
-        updatedAt:     new Date(),
+    try {
+      await this.dataSource.transaction(async (em) => {
+        const isNew = await this.inboxRepo.tryInsert(em, eventId, 'inventory.failed', 'inventory.failed');
+        if (!isNew) {
+          this.logger.logKafkaDuplicate('inventory.failed', eventId, CTX);
+          return;
+        }
+
+        // SAGA compensation: cancel the order, record the reason
+        await em.update(Order, { id: data.orderId }, {
+          status:        OrderStatus.CANCELLED,
+          failureReason: data.reason,
+          updatedAt:     new Date(),
+        });
+
+        await this.inboxRepo.markProcessed(em, eventId);
       });
 
-      await this.inboxRepo.markProcessed(em, eventId);
-    });
+      this.logger.logKafkaSuccess('inventory.failed', eventId, { orderId: data.orderId, newStatus: OrderStatus.CANCELLED, reason: data.reason }, CTX);
+    } catch (err) {
+      this.logger.logKafkaError('inventory.failed', eventId, err, CTX);
+      throw err;
+    }
   }
 
   /**
@@ -103,7 +123,10 @@ export class InventoryEventsConsumer {
     const headers = context.getMessage().headers ?? {};
     const raw = headers['event-id'];
     if (!raw) {
-      this.logger.warn('Received Kafka message without event-id header — skipping');
+      this.logger.warn(
+        { type: 'kafka-missing-header', header: 'event-id', ...CTX },
+        'Received Kafka message without event-id header — skipping',
+      );
       return null;
     }
     return Buffer.isBuffer(raw) ? raw.toString('utf8') : String(raw);

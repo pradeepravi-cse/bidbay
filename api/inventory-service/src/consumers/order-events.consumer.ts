@@ -34,12 +34,13 @@
  *   will re-deliver since the commit didn't happen yet for B) → on re-delivery
  *   B gets the lock → sees qty=0 → emits inventory.failed
  */
-import { Controller, Logger } from '@nestjs/common';
+import { Controller } from '@nestjs/common';
 import { EventPattern, Payload, Ctx, KafkaContext } from '@nestjs/microservices';
 import { DataSource } from 'typeorm';
 import { Inventory } from '../entities/inventory.entity';
 import { InventoryOutbox, OutboxStatus } from '../entities/inventory-outbox.entity';
 import { InboxRepository } from '../repositories/inbox.repository';
+import { AppLogger, setTraceContext } from '@bidbay/logger';
 
 interface OrderItem {
   sku:      string;
@@ -54,13 +55,14 @@ interface OrderCreatedPayload {
   totalAmount: number;
 }
 
+const CTX = { service: 'InventoryService', location: 'OrderEventsConsumer' };
+
 @Controller()
 export class OrderEventsConsumer {
-  private readonly logger = new Logger(OrderEventsConsumer.name);
-
   constructor(
     private readonly dataSource: DataSource,
     private readonly inboxRepo: InboxRepository,
+    private readonly logger: AppLogger,
   ) {}
 
   @EventPattern('order.created')
@@ -71,89 +73,104 @@ export class OrderEventsConsumer {
     const eventId = this.extractEventId(context);
     if (!eventId) return;
 
-    this.logger.log(`order.created received | orderId=${data.orderId} | eventId=${eventId}`);
+    setTraceContext({ traceId: eventId });
 
-    await this.dataSource.transaction(async (em) => {
-      // ── Inbox guard ─────────────────────────────────────────────────────
-      const isNew = await this.inboxRepo.tryInsert(em, eventId, 'order.created', 'order.created');
-      if (!isNew) {
-        this.logger.warn(`Duplicate event skipped: ${eventId}`);
-        return;
-      }
+    this.logger.logKafkaIncoming('order.created', eventId, data, CTX);
 
-      // ── Lock inventory rows FOR UPDATE SKIP LOCKED ──────────────────────
-      const skus = data.items.map((i) => i.sku);
-      const inventoryRows = await em
-        .getRepository(Inventory)
-        .createQueryBuilder('inv')
-        .where('inv.sku IN (:...skus)', { skus })
-        .setLock('pessimistic_write')
-        .setOnLocked('skip_locked')
-        .getMany();
-
-      // Index by SKU for O(1) lookup
-      const bySkuMap = new Map(inventoryRows.map((r) => [r.sku, r]));
-
-      // ── Check every SKU ─────────────────────────────────────────────────
-      let failureReason: string | null = null;
-      for (const item of data.items) {
-        const row = bySkuMap.get(item.sku);
-        if (!row || row.availableQty < item.quantity) {
-          failureReason = `Insufficient stock for ${item.sku}`;
-          break;
+    try {
+      await this.dataSource.transaction(async (em) => {
+        // ── Inbox guard ─────────────────────────────────────────────────────
+        const isNew = await this.inboxRepo.tryInsert(em, eventId, 'order.created', 'order.created');
+        if (!isNew) {
+          this.logger.logKafkaDuplicate('order.created', eventId, CTX);
+          return;
         }
-      }
 
-      let outboxEvent: Partial<InventoryOutbox>;
+        // ── Lock inventory rows FOR UPDATE SKIP LOCKED ──────────────────────
+        const skus = data.items.map((i) => i.sku);
+        const inventoryRows = await em
+          .getRepository(Inventory)
+          .createQueryBuilder('inv')
+          .where('inv.sku IN (:...skus)', { skus })
+          .setLock('pessimistic_write')
+          .setOnLocked('skip_locked')
+          .getMany();
 
-      if (!failureReason) {
-        // ── Happy path: reserve stock ──────────────────────────────────────
+        // Index by SKU for O(1) lookup
+        const bySkuMap = new Map(inventoryRows.map((r) => [r.sku, r]));
+
+        // ── Check every SKU ─────────────────────────────────────────────────
+        let failureReason: string | null = null;
         for (const item of data.items) {
-          const row = bySkuMap.get(item.sku)!;
-          row.availableQty -= item.quantity;
-          row.reservedQty  += item.quantity;
-          await em.save(Inventory, row);
+          const row = bySkuMap.get(item.sku);
+          if (!row || row.availableQty < item.quantity) {
+            failureReason = `Insufficient stock for ${item.sku}`;
+            break;
+          }
         }
 
-        outboxEvent = {
-          aggregateId:   data.orderId,
-          aggregateType: 'Inventory',
-          eventType:     'inventory.reserved',
-          status:        OutboxStatus.UNSENT,
-          payload: {
-            orderId:       data.orderId,
-            reservedItems: data.items.map((i) => ({ sku: i.sku, quantity: i.quantity })),
-          },
-        };
-      } else {
-        // ── Failure path: emit failure event (no stock changes) ───────────
-        this.logger.warn(`Stock check failed for order ${data.orderId}: ${failureReason}`);
+        let outboxEvent: Partial<InventoryOutbox>;
 
-        outboxEvent = {
-          aggregateId:   data.orderId,
-          aggregateType: 'Inventory',
-          eventType:     'inventory.failed',
-          status:        OutboxStatus.UNSENT,
-          payload: {
-            orderId: data.orderId,
-            reason:  failureReason,
-          },
-        };
-      }
+        if (!failureReason) {
+          // ── Happy path: reserve stock ──────────────────────────────────────
+          for (const item of data.items) {
+            const row = bySkuMap.get(item.sku)!;
+            row.availableQty -= item.quantity;
+            row.reservedQty  += item.quantity;
+            await em.save(Inventory, row);
+          }
 
-      // ── Write outbox row (same transaction!) ────────────────────────────
-      await em.save(InventoryOutbox, em.create(InventoryOutbox, outboxEvent));
+          outboxEvent = {
+            aggregateId:   data.orderId,
+            aggregateType: 'Inventory',
+            eventType:     'inventory.reserved',
+            status:        OutboxStatus.UNSENT,
+            payload: {
+              orderId:       data.orderId,
+              reservedItems: data.items.map((i) => ({ sku: i.sku, quantity: i.quantity })),
+            },
+          };
+        } else {
+          // ── Failure path: emit failure event (no stock changes) ───────────
+          this.logger.warn(
+            { type: 'stock-insufficient', orderId: data.orderId, reason: failureReason, ...CTX },
+            `Stock check failed for order ${data.orderId}: ${failureReason}`,
+          );
 
-      // ── Mark inbox PROCESSED ─────────────────────────────────────────────
-      await this.inboxRepo.markProcessed(em, eventId);
-    });
+          outboxEvent = {
+            aggregateId:   data.orderId,
+            aggregateType: 'Inventory',
+            eventType:     'inventory.failed',
+            status:        OutboxStatus.UNSENT,
+            payload: {
+              orderId: data.orderId,
+              reason:  failureReason,
+            },
+          };
+        }
+
+        // ── Write outbox row (same transaction!) ────────────────────────────
+        await em.save(InventoryOutbox, em.create(InventoryOutbox, outboxEvent));
+
+        // ── Mark inbox PROCESSED ─────────────────────────────────────────────
+        await this.inboxRepo.markProcessed(em, eventId);
+      });
+
+      this.logger.logKafkaSuccess('order.created', eventId, { orderId: data.orderId }, CTX);
+    } catch (err) {
+      this.logger.logKafkaError('order.created', eventId, err, CTX);
+      throw err;
+    }
   }
 
   private extractEventId(context: KafkaContext): string | null {
     const headers = context.getMessage().headers ?? {};
     const raw = headers['event-id'];
     if (!raw) {
-      this.logger.warn('Received Kafka message without event-id header — skipping');
+      this.logger.warn(
+        { type: 'kafka-missing-header', header: 'event-id', ...CTX },
+        'Received Kafka message without event-id header — skipping',
+      );
       return null;
     }
     return Buffer.isBuffer(raw) ? raw.toString('utf8') : String(raw);

@@ -33,6 +33,7 @@ import { OutboxRepository } from '../../repositories/outbox.repository';
 import { DataSource } from 'typeorm';
 import { Order, OrderStatus, OrderItem } from '../../entities/order.entity';
 import { Outbox, OutboxStatus } from '../../entities/order-outbox.entity';
+import { AppLogger } from '@bidbay/logger';
 
 export interface PlaceOrderResult {
   orderId: string;
@@ -41,6 +42,8 @@ export interface PlaceOrderResult {
   createdAt: Date;
 }
 
+const CTX = { service: 'OrderService', location: 'PlaceOrderHandler' };
+
 @CommandHandler(PlaceOrderCommand)
 export class PlaceOrderHandler implements ICommandHandler<PlaceOrderCommand, PlaceOrderResult> {
   constructor(
@@ -48,10 +51,13 @@ export class PlaceOrderHandler implements ICommandHandler<PlaceOrderCommand, Pla
     // Repositories are thin wrappers — they isolate the DB concern from the handler.
     private readonly orderRepo: OrderRepository,
     private readonly outboxRepo: OutboxRepository,
+    private readonly logger: AppLogger,
   ) {}
 
   async execute(command: PlaceOrderCommand): Promise<PlaceOrderResult> {
     const { userId, items } = command;
+
+    this.logger.logOperationStart('PlaceOrder', { userId, itemCount: items.length }, CTX);
 
     // Calculate total: sum(quantity × price) for every item
     const totalAmount = items.reduce(
@@ -59,40 +65,48 @@ export class PlaceOrderHandler implements ICommandHandler<PlaceOrderCommand, Pla
       0,
     );
 
-    // ── OUTBOX PATTERN: atomic double-insert ─────────────────────────────────
-    return this.dataSource.transaction(async (em) => {
-      // Step 1: persist the order
-      const order = em.create(Order, {
-        userId,
-        items,
-        totalAmount,
-        status: OrderStatus.PENDING,
-      });
-      await em.save(Order, order);
+    try {
+      // ── OUTBOX PATTERN: atomic double-insert ─────────────────────────────────
+      const result = await this.dataSource.transaction(async (em) => {
+        // Step 1: persist the order
+        const order = em.create(Order, {
+          userId,
+          items,
+          totalAmount,
+          status: OrderStatus.PENDING,
+        });
+        await em.save(Order, order);
 
-      // Step 2: write the outbox event IN THE SAME TRANSACTION
-      // eventType becomes the Kafka topic name.
-      const outbox = em.create(Outbox, {
-        aggregateId: order.id,
-        aggregateType: 'Order',
-        eventType: 'order.created',
-        status: OutboxStatus.UNSENT,
-        payload: {
+        // Step 2: write the outbox event IN THE SAME TRANSACTION
+        // eventType becomes the Kafka topic name.
+        const outbox = em.create(Outbox, {
+          aggregateId: order.id,
+          aggregateType: 'Order',
+          eventType: 'order.created',
+          status: OutboxStatus.UNSENT,
+          payload: {
+            orderId:     order.id,
+            userId:      order.userId,
+            items:       order.items,
+            totalAmount: order.totalAmount,
+          } as Record<string, unknown>,
+        });
+        await em.save(Outbox, outbox);
+
+        // Return the 202-response body — minimal acknowledgement only.
+        return {
           orderId:     order.id,
-          userId:      order.userId,
-          items:       order.items,
-          totalAmount: order.totalAmount,
-        } as Record<string, unknown>,
+          status:      order.status,
+          totalAmount: Number(order.totalAmount),
+          createdAt:   order.createdAt,
+        };
       });
-      await em.save(Outbox, outbox);
 
-      // Return the 202-response body — minimal acknowledgement only.
-      return {
-        orderId:     order.id,
-        status:      order.status,
-        totalAmount: Number(order.totalAmount),
-        createdAt:   order.createdAt,
-      };
-    });
+      this.logger.logOperationSuccess('PlaceOrder', { orderId: result.orderId, status: result.status, totalAmount: result.totalAmount }, CTX);
+      return result;
+    } catch (err) {
+      this.logger.logOperationError('PlaceOrder', err, CTX);
+      throw err;
+    }
   }
 }

@@ -9,16 +9,31 @@ import { CommandHandler, ICommandHandler } from '@nestjs/cqrs';
 import { NotFoundException } from '@nestjs/common';
 import { UpdateInventoryCommand } from '../update-inventory.command';
 import { InventoryRepository } from '../../repositories/inventory.repository';
+import { AppLogger } from '@bidbay/logger';
+
+const CTX = { service: 'InventoryService', location: 'UpdateInventoryHandler' };
 
 @CommandHandler(UpdateInventoryCommand)
 export class UpdateInventoryHandler implements ICommandHandler<UpdateInventoryCommand> {
-  constructor(private readonly inventoryRepo: InventoryRepository) {}
+  constructor(
+    private readonly inventoryRepo: InventoryRepository,
+    private readonly logger: AppLogger,
+  ) {}
 
   async execute(command: UpdateInventoryCommand) {
-    const item = await this.inventoryRepo.findBySku(command.sku);
-    if (!item) throw new NotFoundException(`SKU ${command.sku} not found`);
+    this.logger.logOperationStart('UpdateInventory', { sku: command.sku, availableQty: command.availableQty }, CTX);
 
-    item.availableQty = command.availableQty;
-    return this.inventoryRepo.save(item);
+    try {
+      const item = await this.inventoryRepo.findBySku(command.sku);
+      if (!item) throw new NotFoundException(`SKU ${command.sku} not found`);
+
+      item.availableQty = command.availableQty;
+      const result = await this.inventoryRepo.save(item);
+      this.logger.logOperationSuccess('UpdateInventory', { sku: result.sku, availableQty: result.availableQty }, CTX);
+      return result;
+    } catch (err) {
+      this.logger.logOperationError('UpdateInventory', err, CTX);
+      throw err;
+    }
   }
 }

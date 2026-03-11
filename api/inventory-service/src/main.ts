@@ -7,13 +7,14 @@
  * (multiple pods) each `order.created` message is processed by exactly ONE
  * pod — Kafka distributes partitions across the group.
  */
-import { Logger, ValidationPipe } from '@nestjs/common';
+import { ValidationPipe } from '@nestjs/common';
 import { NestFactory } from '@nestjs/core';
 import { MicroserviceOptions, Transport } from '@nestjs/microservices';
+import { Logger } from 'nestjs-pino';
 import { AppModule } from './app/app.module';
 
 async function bootstrap() {
-  const app = await NestFactory.create(AppModule);
+  const app = await NestFactory.create(AppModule, { bufferLogs: true });
 
   // ── Kafka consumer ────────────────────────────────────────────────────────
   app.connectMicroservice<MicroserviceOptions>({
@@ -33,17 +34,28 @@ async function bootstrap() {
   // ── HTTP server ───────────────────────────────────────────────────────────
   app.setGlobalPrefix('api');
   app.useGlobalPipes(new ValidationPipe({ whitelist: true, transform: true }));
+  app.useLogger(app.get(Logger));
+  app.flushLogs();
 
   await app.startAllMicroservices();
 
   const port = process.env.INVENTORY_SERVICE_PORT ?? 3002;
   await app.listen(port);
 
-  Logger.log(`Inventory Service HTTP  → http://localhost:${port}/api`);
-  Logger.log(`Inventory Service Kafka → consuming: order.created`);
+  const logger = app.get(Logger);
+  logger.log(
+    {
+      type: 'startup',
+      service: 'inventory-service',
+      location: 'bootstrap',
+      url: `http://localhost:${port}/api`,
+      environment: process.env.NODE_ENV,
+    },
+    'Inventory Service Started',
+  );
 }
 
 bootstrap().catch((err) => {
-  Logger.error('Inventory Service failed to start', err);
+  console.error('Inventory Service failed to start', err);
   process.exit(1);
 });

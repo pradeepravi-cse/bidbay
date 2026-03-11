@@ -15,7 +15,8 @@
     "skipDefaultLibCheck": true,
     "baseUrl": ".",
     "paths": {
-      "@bidbay-monorepo/events": ["core/events/src/index.ts"]
+      "@bidbay-monorepo/events": ["core/events/src/index.ts"],
+      "@bidbay/logger": ["libs/logger/src/index.ts"]
     }
   },
   "exclude": ["node_modules", "tmp"]

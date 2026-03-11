@@ -1,0 +1,29 @@
+meta {
+  name: place order
+  type: http
+  seq: 3
+}
+
+post {
+  url: http://localhost:8081/api/orders
+  body: json
+  auth: inherit
+}
+
+body:json {
+  {
+    "userId": "d496829d-e0b9-4b75-9e8b-11ab47ede012",
+    "items": [
+      {
+        "sku": "AAA00011",
+        "quantity": 1,
+        "price": 2000
+      }
+    ]
+  }
+}
+
+settings {
+  encodeUrl: true
+  timeout: 0
+}

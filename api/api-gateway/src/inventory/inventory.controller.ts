@@ -13,7 +13,7 @@ import { Request } from 'express';
 import { InventoryService } from './inventory.service';
 import { CreateInventoryDto } from './dto/create-inventory.dto';
 import { UpdateInventoryDto } from './dto/update-inventory.dto';
-import { readTraceIdFromHeaders } from '../utils/traceContext';
+import { readTraceIdFromHeaders } from '@bidbay/logger';
 
 @Controller('inventory')
 export class InventoryController {

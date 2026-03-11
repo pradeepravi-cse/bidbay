@@ -13,7 +13,7 @@ import { Request } from 'express';
 import { OrdersService } from './orders.service';
 import { PlaceOrderDto } from './dto/place-order.dto';
 import { ListOrdersQueryDto } from './dto/list-orders-query.dto';
-import { readTraceIdFromHeaders } from '../utils/traceContext';
+import { readTraceIdFromHeaders } from '@bidbay/logger';
 
 @Controller('orders')
 export class OrdersController {

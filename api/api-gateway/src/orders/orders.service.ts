@@ -9,7 +9,7 @@ import { AxiosError } from 'axios';
 
 import { PlaceOrderDto } from './dto/place-order.dto';
 import { ListOrdersQueryDto } from './dto/list-orders-query.dto';
-import { TRACE_ID_HEADER } from '../utils/traceContext';
+import { TRACE_ID_HEADER } from '@bidbay/logger';
 
 @Injectable()
 export class OrdersService {

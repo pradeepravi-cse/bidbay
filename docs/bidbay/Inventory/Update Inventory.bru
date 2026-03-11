@@ -1,0 +1,22 @@
+meta {
+  name: Update Inventory
+  type: http
+  seq: 3
+}
+
+patch {
+  url: http://localhost:8081/api/inventory/AAA00011
+  body: json
+  auth: inherit
+}
+
+body:json {
+  {
+    "availableQty": 200
+  }
+}
+
+settings {
+  encodeUrl: true
+  timeout: 0
+}

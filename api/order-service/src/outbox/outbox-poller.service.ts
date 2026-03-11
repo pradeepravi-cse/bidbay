@@ -31,28 +31,30 @@
  *   Pod C skips 1-20, locks 21-30
  * No duplicate publishes. No deadlocks.
  */
-import { Injectable, OnModuleInit, Logger } from '@nestjs/common';
+import { Injectable, OnModuleInit } from '@nestjs/common';
 import { Cron } from '@nestjs/schedule';
 import { Inject } from '@nestjs/common';
 import { ClientKafka } from '@nestjs/microservices';
 import { DataSource } from 'typeorm';
 import { firstValueFrom } from 'rxjs';
 import { OutboxRepository } from '../repositories/outbox.repository';
+import { AppLogger } from '@bidbay/logger';
+
+const CTX = { service: 'OrderService', location: 'OutboxPollerService' };
 
 @Injectable()
 export class OutboxPollerService implements OnModuleInit {
-  private readonly logger = new Logger(OutboxPollerService.name);
-
   constructor(
     private readonly dataSource: DataSource,
     private readonly outboxRepo: OutboxRepository,
     @Inject('KAFKA_CLIENT') private readonly kafkaClient: ClientKafka,
+    private readonly logger: AppLogger,
   ) {}
 
   /** Connect the Kafka producer on startup */
   async onModuleInit() {
     await this.kafkaClient.connect();
-    this.logger.log('Outbox poller connected to Kafka');
+    this.logger.info({ type: 'startup', ...CTX }, 'Outbox poller connected to Kafka');
   }
 
   /** Run every 2 seconds — matches the TDD specification */
@@ -62,7 +64,7 @@ export class OutboxPollerService implements OnModuleInit {
       const rows = await this.outboxRepo.findUnsentLocked(em);
       if (!rows.length) return;
 
-      this.logger.debug(`Outbox poll: processing ${rows.length} row(s)`);
+      this.logger.debug({ type: 'outbox-poll', rowCount: rows.length, ...CTX }, `Outbox poll: processing ${rows.length} row(s)`);
 
       for (const row of rows) {
         try {
@@ -78,10 +80,9 @@ export class OutboxPollerService implements OnModuleInit {
             }),
           );
           await this.outboxRepo.markSent(em, row);
-          this.logger.debug(`Outbox row ${row.id} → ${row.eventType} published`);
+          this.logger.logOutboxPublished(row.eventType, row.id, CTX);
         } catch (err) {
-          const message = err instanceof Error ? err.message : String(err);
-          this.logger.error(`Failed to publish outbox row ${row.id}: ${message}`);
+          this.logger.logOutboxError(row.eventType, row.id, err, CTX);
           await this.outboxRepo.markFailed(em, row);
         }
       }

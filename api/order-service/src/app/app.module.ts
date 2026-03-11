@@ -20,6 +20,7 @@ import { TypeOrmModule } from '@nestjs/typeorm';
 import { CqrsModule } from '@nestjs/cqrs';
 import { ScheduleModule } from '@nestjs/schedule';
 import { ClientsModule, Transport } from '@nestjs/microservices';
+import { LoggerModule } from '@bidbay/logger';
 
 import { AppController } from './app.controller';
 
@@ -53,6 +54,9 @@ const QUERY_HANDLERS   = [GetOrderByIdHandler, GetOrdersByUserHandler];
   imports: [
     // Load .env globally so process.env is populated everywhere
     ConfigModule.forRoot({ isGlobal: true }),
+
+    // Structured JSON logging with trace ID propagation
+    LoggerModule.forService('order-service'),
 
     // PostgreSQL connection — uses env vars set in .env
     TypeOrmModule.forRootAsync({

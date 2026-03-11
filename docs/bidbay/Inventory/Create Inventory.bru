@@ -1,0 +1,23 @@
+meta {
+  name: Create Inventory
+  type: http
+  seq: 3
+}
+
+post {
+  url: http://localhost:8081/api/inventory
+  body: json
+  auth: inherit
+}
+
+body:json {
+  {
+    "sku": "AAA00014",
+    "availableQty": 200
+  }
+}
+
+settings {
+  encodeUrl: true
+  timeout: 0
+}

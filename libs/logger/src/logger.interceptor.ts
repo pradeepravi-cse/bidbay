@@ -7,13 +7,13 @@ import {
 import { randomUUID } from 'crypto';
 import { catchError, Observable, tap } from 'rxjs';
 
-import { AppLogger, RequestContext } from '../app/logger.service';
+import { AppLogger, RequestContext } from './app-logger.service';
 import {
   TRACE_ID_HEADER,
   readTraceIdFromHeaders,
   setTraceContext,
   writeTraceIdHeader,
-} from '../utils/traceContext';
+} from './trace-context';
 
 @Injectable()
 export class LoggerInterceptor implements NestInterceptor {

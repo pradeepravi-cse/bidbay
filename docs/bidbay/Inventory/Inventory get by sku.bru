@@ -1,0 +1,16 @@
+meta {
+  name: Inventory get by sku
+  type: http
+  seq: 4
+}
+
+get {
+  url: http://localhost:8081/api/inventory/AAA00011
+  body: none
+  auth: inherit
+}
+
+settings {
+  encodeUrl: true
+  timeout: 0
+}

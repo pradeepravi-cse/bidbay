@@ -20,9 +20,8 @@ export class Inventory {
   @Column('int', { default: 0 })
   reservedQty: number; // qty locked by PENDING orders
 
-  @Column('int')
   get totalQty(): number {
-    // virtual: availableQty + reservedQty
+    // virtual: availableQty + reservedQty (not persisted)
     return this.availableQty + this.reservedQty;
   }
 

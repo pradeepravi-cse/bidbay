@@ -6,7 +6,7 @@ import {
   TRACE_ID_HEADER,
   readTraceIdFromHeaders,
   writeTraceIdHeader,
-} from '../utils/traceContext';
+} from './trace-context';
 
 @Injectable()
 export class TraceIdMiddleware implements NestMiddleware {

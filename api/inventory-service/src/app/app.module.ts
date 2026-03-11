@@ -13,6 +13,7 @@ import { TypeOrmModule } from '@nestjs/typeorm';
 import { CqrsModule } from '@nestjs/cqrs';
 import { ScheduleModule } from '@nestjs/schedule';
 import { ClientsModule, Transport } from '@nestjs/microservices';
+import { LoggerModule } from '@bidbay/logger';
 
 import { AppController } from './app.controller';
 
@@ -46,6 +47,9 @@ const QUERY_HANDLERS = [GetAllInventoryHandler, GetInventoryBySkuHandler];
 @Module({
   imports: [
     ConfigModule.forRoot({ isGlobal: true }),
+
+    // Structured JSON logging with trace ID propagation
+    LoggerModule.forService('inventory-service'),
 
     TypeOrmModule.forRootAsync({
       useFactory: () => ({

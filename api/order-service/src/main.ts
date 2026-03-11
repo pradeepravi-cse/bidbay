@@ -16,13 +16,14 @@
  * app.startAllMicroservices() must be called BEFORE app.listen() so the Kafka
  * consumer is ready to receive messages as soon as the service is healthy.
  */
-import { Logger, ValidationPipe } from '@nestjs/common';
+import { ValidationPipe } from '@nestjs/common';
 import { NestFactory } from '@nestjs/core';
 import { MicroserviceOptions, Transport } from '@nestjs/microservices';
+import { Logger } from 'nestjs-pino';
 import { AppModule } from './app/app.module';
 
 async function bootstrap() {
-  const app = await NestFactory.create(AppModule);
+  const app = await NestFactory.create(AppModule, { bufferLogs: true });
 
   // ── Kafka consumer (SAGA listener) ────────────────────────────────────────
   /**
@@ -49,6 +50,8 @@ async function bootstrap() {
   // ── HTTP server ───────────────────────────────────────────────────────────
   app.setGlobalPrefix('api');
   app.useGlobalPipes(new ValidationPipe({ whitelist: true, transform: true }));
+  app.useLogger(app.get(Logger));
+  app.flushLogs();
 
   // Start the Kafka consumer FIRST so it is ready before HTTP traffic arrives
   await app.startAllMicroservices();
@@ -56,11 +59,20 @@ async function bootstrap() {
   const port = process.env.ORDER_SERVICE_PORT ?? 3001;
   await app.listen(port);
 
-  Logger.log(`Order Service HTTP  → http://localhost:${port}/api`);
-  Logger.log(`Order Service Kafka → consuming: inventory.reserved, inventory.failed`);
+  const logger = app.get(Logger);
+  logger.log(
+    {
+      type: 'startup',
+      service: 'order-service',
+      location: 'bootstrap',
+      url: `http://localhost:${port}/api`,
+      environment: process.env.NODE_ENV,
+    },
+    'Order Service Started',
+  );
 }
 
 bootstrap().catch((err) => {
-  Logger.error('Order Service failed to start', err);
+  console.error('Order Service failed to start', err);
   process.exit(1);
 });
