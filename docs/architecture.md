@@ -123,13 +123,16 @@ This is **SAGA choreography** — there is no central orchestrator. Each service
    → "inventory.failed"    → UPDATE order SET status = CANCELLED
 ```
 
-### Kafka Topics
+### Kafka Topics & Consumer Groups
 
-| Topic | Producer | Consumer | Meaning |
-|-------|----------|----------|---------|
-| `order.created` | Order Service | Inventory Service | New order placed |
-| `inventory.reserved` | Inventory Service | Order Service | Stock successfully reserved |
-| `inventory.failed` | Inventory Service | Order Service | Insufficient stock |
+| Topic | Producer | Consumer | Consumer Group | Meaning |
+|-------|----------|----------|----------------|---------|
+| `order.created` | Order Service | Inventory Service | `inventory-service` | New order placed |
+| `inventory.reserved` | Inventory Service | Order Service | `order-service` | Stock successfully reserved |
+| `inventory.failed` | Inventory Service | Order Service | `order-service` | Insufficient stock |
+
+**Producer clientIds**: `order-service-producer`, `inventory-service-producer`
+**Consumer clientIds**: `order-service-consumer`, `inventory-service-consumer`
 
 ---
 
@@ -147,7 +150,8 @@ Request Handler (single transaction):
   └──────────────────────────────────┘
          ↓ (asynchronously, every 2s)
   Outbox Poller:
-    SELECT * FROM outbox WHERE status='UNSENT' FOR UPDATE SKIP LOCKED
+    -- Order Service: SELECT * FROM outbox WHERE status='UNSENT' FOR UPDATE SKIP LOCKED
+  -- Inventory Service: SELECT * FROM inventory_outbox WHERE status='UNSENT' FOR UPDATE SKIP LOCKED
     → send to Kafka
     → UPDATE outbox SET status='SENT'
 ```
@@ -216,16 +220,16 @@ This ensures two concurrent orders never both see "stock available" for the same
 | created_at | timestamp | |
 | updated_at | timestamp | |
 
-**outbox** (order_outbox)
+**outbox** ← actual DB table name (TypeScript entity: `Outbox`, `@Entity('outbox')`)
 | Column | Type | Notes |
 |--------|------|-------|
-| id | UUID | Primary key, used as Kafka event-id |
+| id | UUID | Primary key, used as Kafka event-id header |
 | aggregate_id | varchar | orderId |
 | aggregate_type | varchar | `'Order'` |
 | event_type | varchar | `'order.created'` |
 | payload | JSONB | Full event payload |
 | status | enum | `UNSENT` → `SENT` / `FAILED` |
-| retry_count | int | Max 5 retries |
+| retry_count | int | Max 5 retries before permanently `FAILED` |
 | created_at | timestamp | |
 | sent_at | timestamp | Set on success |
 
@@ -252,8 +256,13 @@ This ensures two concurrent orders never both see "stock available" for the same
 | version | int | Optimistic lock version |
 | updated_at | timestamp | |
 
-**inventory_outbox** — same shape as order_outbox
-**inventory_inbox** — same shape as order_inbox
+**inventory_outbox** — same column schema as **outbox** above; DB table name is `inventory_outbox` (`@Entity('inventory_outbox')`)
+- event_type values: `inventory.reserved` | `inventory.failed`
+
+**inventory_inbox** — same column schema as **order_inbox**; DB table name is `inventory_inbox` (`@Entity('inventory_inbox')`)
+- topic: `order.created`
+
+> **Column naming note**: TypeORM converts camelCase TypeScript property names to snake_case in PostgreSQL (e.g., `aggregateId` → `aggregate_id`, `retryCount` → `retry_count`).
 
 ---
 

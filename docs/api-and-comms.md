@@ -4,10 +4,49 @@
 
 -   Domain Driven Design (DDD)
 -   CQRS (Command Query Responsibility Segregation)
--   Event Sourcing
--   SAGA Pattern (Orchestrated)
+-   SAGA Pattern (**Choreography** — no central orchestrator; each service reacts to events)
+-   Transactional Outbox + Inbox (reliable Kafka delivery + idempotency)
 -   Apache Kafka Event Bus
 -   API Gateway (Single Entry Point)
+
+> Note: "Event Sourcing" is listed as a future pattern. The current implementation persists the latest state to relational tables (not event logs).
+
+---
+
+## Currently Implemented APIs
+
+All routes are exposed through the API Gateway at `http://localhost:3000`.
+
+### Orders (→ Order Service :3001)
+
+| Method | Path | Status | Request Body | Notes |
+|--------|------|--------|-------------|-------|
+| POST | /api/orders | 202 | `{ userId: UUID, items: [{sku, quantity, price}] }` | Returns `{orderId, status: PENDING, totalAmount, createdAt}` |
+| GET | /api/orders | 200 | — | Query: `userId` (UUID), `status?` (PENDING\|CONFIRMED\|CANCELLED), `page?` (default 1), `limit?` (default 10, max 50) |
+| GET | /api/orders/:orderId | 200/404 | — | Returns full Order entity |
+
+### Inventory (→ Inventory Service :3002)
+
+| Method | Path | Status | Request Body | Notes |
+|--------|------|--------|-------------|-------|
+| POST | /api/inventory | 201 | `{ sku: string, availableQty: number }` | 409 if SKU already exists |
+| PATCH | /api/inventory/:sku | 200 | `{ availableQty: number }` | 404 if SKU not found |
+| GET | /api/inventory | 200 | — | Returns `{ data: Inventory[], total }` |
+| GET | /api/inventory/:sku | 200/404 | — | Returns full Inventory entity |
+
+### Kafka Topics (Implemented)
+
+| Topic | Producer | Consumer Group | Meaning |
+|-------|----------|---------------|---------|
+| `order.created` | Order Service | `inventory-service` | New order placed |
+| `inventory.reserved` | Inventory Service | `order-service` | Stock reserved successfully |
+| `inventory.failed` | Inventory Service | `order-service` | Insufficient stock |
+
+---
+
+## Planned Services (Not Yet Implemented)
+
+The following services are defined in the BRD but not yet built.
 
 ------------------------------------------------------------------------
 
@@ -196,17 +235,27 @@
 
 # Kafka Topics
 
-  Topic               Producer   Consumers
-  ------------------- ---------- ----------------------
-  user.registered     Identity   User, Notification
-  user.kyc.verified   User       Auction
-  auction.created     Auction    Search, Notification
-  bid.requested       Bid        Wallet
-  funds.reserved      Wallet     Bid
-  payment.completed   Payment    Wallet
-  auction.closed      Auction    Wallet, Notification
-  wallet.credited     Wallet     Notification
-  bid.outbid          Bid        Notification
+## Implemented
+
+| Topic | Producer | Consumer(s) |
+|-------|----------|-------------|
+| `order.created` | Order Service | Inventory Service |
+| `inventory.reserved` | Inventory Service | Order Service |
+| `inventory.failed` | Inventory Service | Order Service |
+
+## Planned (Future Services)
+
+| Topic | Producer | Consumer(s) |
+|-------|----------|-------------|
+| `user.registered` | Identity | User, Notification |
+| `user.kyc.verified` | User | Auction |
+| `auction.created` | Auction | Search, Notification |
+| `bid.requested` | Bid | Wallet |
+| `funds.reserved` | Wallet | Bid |
+| `payment.completed` | Payment | Wallet |
+| `auction.closed` | Auction | Wallet, Notification |
+| `wallet.credited` | Wallet | Notification |
+| `bid.outbid` | Bid | Notification |
 
 ------------------------------------------------------------------------
 

@@ -351,6 +351,35 @@ await app.listen(3001);             // Start HTTP server
 
 ---
 
+## Kafka Configuration Reference
+
+### Consumer Groups
+
+Each microservice runs as a **hybrid app** (HTTP + Kafka in one process). Kafka consumer groups are fixed in code:
+
+| Service | Consumer Group ID | Consumes |
+|---------|------------------|----------|
+| Order Service | `order-service` | `inventory.reserved`, `inventory.failed` |
+| Inventory Service | `inventory-service` | `order.created` |
+
+### Producer ClientIds
+
+| Service | Producer clientId | Consumer clientId |
+|---------|------------------|------------------|
+| Order Service | `order-service-producer` | `order-service-consumer` |
+| Inventory Service | `inventory-service-producer` | `inventory-service-consumer` |
+
+### Database Table Names
+
+| Service | DB | Outbox Table | Inbox Table |
+|---------|----|-------------|------------|
+| Order Service | `order_service` | `outbox` | `order_inbox` |
+| Inventory Service | `inventory_service` | `inventory_outbox` | `inventory_inbox` |
+
+> Note: TypeORM converts camelCase TypeScript properties to snake_case column names (e.g., `aggregateId` → `aggregate_id`).
+
+---
+
 ## Environment Variables Reference
 
 | Variable | Default | Used By |
